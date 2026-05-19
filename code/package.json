@@ -4,8 +4,10 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "start": "node app.js",
-     "start:all": "node start-all.js"
+    "start": "concurrently \"npm run gateway\" \"npm run pi-rpc\" \"npm run pi-acp\"",
+    "gateway": "node app.js",
+    "pi-rpc": "npx pi --mode rpc",
+    "pi-acp": "npx pi-acp --port 3400"
   },
   "keywords": [],
   "author": "",
@@ -17,6 +19,10 @@
     "axios": "^1.16.1",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "pi-acp": "^0.0.27",
     "sqlite3": "^6.0.1"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
   }
 }
