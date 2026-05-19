@@ -5,3 +5,4 @@ code/config.js
 *.db-journal
 .vscode/
 .idea/
+AGENTS.md
