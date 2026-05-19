@@ -1,7 +1,7 @@
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
 
-const dbPath = path.resolve(__dirname, '../../stats.db'); // 注意路径
+const dbPath = path.resolve(__dirname, '../../../stats.db');
 const db = new sqlite3.Database(dbPath);
 
 db.serialize(() => {
@@ -31,5 +31,6 @@ function logUsage(data) {
     (err) => { if (err) console.error('DB insert error:', err); }
   );
 }
+
 
 module.exports = { db, logUsage };

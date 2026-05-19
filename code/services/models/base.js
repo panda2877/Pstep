@@ -1,11 +1,9 @@
 const axios = require('axios');
-const { MODEL_CONFIG } = require('./config');
+const { MODEL_CONFIG } = require('../../config');
 
 async function callModel(modelName, requestBody) {
   const modelConfig = MODEL_CONFIG[modelName];
-  if (!modelConfig) {
-    throw new Error(`Model ${modelName} not configured`);
-  }
+  if (!modelConfig) throw new Error(`Model ${modelName} not configured`);
 
   const start = Date.now();
   try {
@@ -18,19 +16,20 @@ async function callModel(modelName, requestBody) {
       },
       data: {
         ...requestBody,
+        stream: false,
         model: modelConfig.remoteModel || modelName,
       },
       timeout: 30000,
     });
     const latency = Date.now() - start;
-    const usage = response.data.usage || { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
+    const usage = response.data.usage || {};
+    const input_tokens = usage.prompt_tokens || usage.input_tokens || 0;
+    const output_tokens = usage.completion_tokens || usage.output_tokens || 0;
+    const total_tokens = usage.total_tokens || (input_tokens + output_tokens) || 0;
+
     return {
       success: true,
-      usage: {
-        input_tokens: usage.prompt_tokens || 0,
-        output_tokens: usage.completion_tokens || 0,
-        total_tokens: usage.total_tokens || 0,
-      },
+      usage: { input_tokens, output_tokens, total_tokens },
       latency,
       model: modelName,
       data: response.data,
@@ -40,7 +39,7 @@ async function callModel(modelName, requestBody) {
     console.error(`Model ${modelName} failed:`, err.message);
     return {
       success: false,
-      error: err.message || 'Unknown error',
+      error: err.message,
       latency,
       model: modelName,
     };
