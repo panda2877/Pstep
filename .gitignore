@@ -1,0 +1,6 @@
+code/node_modules/
+code/.env
+*.db
+*.db-journal
+.vscode/
+.idea/
