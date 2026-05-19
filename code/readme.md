@@ -1,0 +1,2 @@
+git clone deployer@134.175.163.213:~/repos/Pstep.git ~/Pstep
+
