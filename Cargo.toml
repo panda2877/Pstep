@@ -1,0 +1,3 @@
+[workspace]
+members = ["pstep-core", "pstep-gateway"]
+resolver = "2"

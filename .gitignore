@@ -1,8 +1,18 @@
+# Node.js
 code/node_modules/
 code/.env
 code/config.js
+
+# Rust
+target/
+
+# Database
 *.db
 *.db-journal
+
+# IDE
 .vscode/
 .idea/
+
+# AGENTS.md
 AGENTS.md
