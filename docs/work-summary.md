@@ -129,6 +129,13 @@ pstep-core     (lib crate)
 - 强制非流式模式（Claude Code 不支持流式）
 - Claude Code 端到端集成验证通过
 
+### 2026-05-21 晚上：HTTP 优雅重启
+- 实现 HTTP 优雅重启（graceful shutdown）
+- 修改 `main.rs` 关闭流程：不再直接 abort HTTP 服务器，改为 await graceful shutdown 完成
+- 保证 in-flight 请求在重启时能正常完成，避免 Claude Code 连接中断
+- WebSocket 部分保持 abort（当前无 ACP 场景，未来需要时再实现优雅关闭）
+- 编译验证通过
+
 ## 待完成项
 
 ### 验证与测试
@@ -139,6 +146,7 @@ pstep-core     (lib crate)
 - [ ] `/v1/messages` 端点的 `max_tokens` 字段已接收但未传给上游（使用上游默认值）
 
 ### 生产化
+- [x] HTTP 优雅重启（graceful shutdown，等待 in-flight 请求完成）
 - [ ] 从 SSE 流提取 usage 信息（`StreamSseChunk.usage` 字段未使用）
 - [ ] 配置热重载（当前需重启加载）
 - [ ] 更完善的错误处理（自定义错误类型层级）
@@ -186,3 +194,4 @@ Pstep/
 - Rust 2024 edition 中 `env::set_var`/`remove_var` 是 unsafe（测试中已用 unsafe 块处理）
 - `StreamSseChunk.usage` 字段未使用（待实现从 SSE 流提取 usage 功能）
 - CNB 密钥仓库 `pstep-config.yml` 需用户手动创建
+- WebSocket ACP 服务器重启时会强制断开连接（未来实现 ACP 场景时需改为优雅关闭）

@@ -57,11 +57,15 @@ async fn main() {
     shutdown_signal().await;
     tracing::info!("Shutting down...");
 
-    // Abort WebSocket server
+    // Abort WebSocket server (no graceful drain yet, TODO: implement when ACP is needed)
     ws_handle.abort();
 
-    // Wait for HTTP server to finish
-    http_handle.abort();
+    // Wait for HTTP server to finish graceful shutdown (drain in-flight requests)
+    // The with_graceful_shutdown already handles this - it stops accepting new connections
+    // and waits for in-flight requests to complete. We just need to await the handle.
+    if let Err(e) = http_handle.await {
+        tracing::error!("HTTP server shutdown error: {}", e);
+    }
 
     tracing::info!("Server stopped");
 }
