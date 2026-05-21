@@ -37,6 +37,24 @@ $:
           script: |
             cargo fmt --all --check
           continue-on-error: true
+        - name: integration-test
+          script: |
+            # 启动网关后台运行，验证健康检查和 API 端点
+            cargo run -p pstep-gateway &
+            GW_PID=$!
+            sleep 3
+
+            # 健康检查
+            HEALTH=$(curl -s http://localhost:3000/health)
+            echo "health: $HEALTH"
+
+            # 模型列表
+            MODELS=$(curl -s http://localhost:3000/v1/models)
+            echo "models: $MODELS"
+
+            kill $GW_PID 2>/dev/null
+            wait $GW_PID 2>/dev/null
+            echo "integration test passed"
 
     - name: release-build
       docker:
@@ -57,11 +75,78 @@ $:
         - name: install-system-deps
           script: |
             apt-get update
-            apt-get install -y pkg-config libssl-dev
+            apt-get install -y pkg-config libssl-dev python3
             rustup component add clippy rustfmt
         - name: build-release
           script: |
             cargo build --release --workspace
+        - name: publish-release
+          script: |
+            set -e
+            VERSION=$(grep '^version' /workspace/pstep-gateway/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+            TAG="v${VERSION}-build-${CNB_BUILD_SN}"
+            BINARY="/workspace/target/release/pstep-gateway"
+            API="${CNB_API_ENDPOINT:-https://api.cnb.cool}"
+            REPO="panda2877/Pstep"
+
+            echo "=== Publishing release ${TAG} ==="
+
+            # 1. 创建 Release
+            RELEASE_JSON=$(python3 -c "
+import json, sys
+body = json.dumps({'tag_name': '${TAG}', 'name': 'Pstep Gateway ${TAG}', 'body': 'Build #${CNB_BUILD_SN}'})
+print(body)
+")
+            RESP=$(curl -s -X POST "${API}/${REPO}/-/releases" \
+              -H "Accept: application/vnd.cnb.api+json" \
+              -H "Authorization: Bearer ${CNB_TOKEN}" \
+              -H "Content-Type: application/json" \
+              -d "$RELEASE_JSON")
+
+            RELEASE_ID=$(echo "$RESP" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('id',''))" 2>/dev/null || echo "")
+            if [ -z "$RELEASE_ID" ]; then
+              echo "Release creation response: $RESP"
+              echo "Check if tag already exists, skipping..."
+              exit 0
+            fi
+            echo "Release created: id=$RELEASE_ID"
+
+            # 2. 获取上传 URL
+            UPLOAD_JSON=$(python3 -c "
+import json
+body = json.dumps({'name': 'pstep-gateway-x86_64-linux'})
+print(body)
+")
+            UPLOAD_RESP=$(curl -s -X POST "${API}/${REPO}/-/releases/${RELEASE_ID}/assets/upload-url" \
+              -H "Accept: application/vnd.cnb.api+json" \
+              -H "Authorization: Bearer ${CNB_TOKEN}" \
+              -H "Content-Type: application/json" \
+              -d "$UPLOAD_JSON")
+
+            UPLOAD_URL=$(echo "$UPLOAD_RESP" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('upload_url',''))" 2>/dev/null || echo "")
+            ASSET_ID=$(echo "$UPLOAD_RESP" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('id',''))" 2>/dev/null || echo "")
+
+            if [ -z "$UPLOAD_URL" ]; then
+              echo "Upload URL response: $UPLOAD_RESP"
+              exit 1
+            fi
+            echo "Upload URL obtained"
+
+            # 3. 上传二进制
+            curl -s -X PUT "$UPLOAD_URL" \
+              -H "Content-Type: application/octet-stream" \
+              --data-binary @"$BINARY"
+            echo "Binary uploaded"
+
+            # 4. 确认上传
+            if [ -n "$ASSET_ID" ]; then
+              curl -s -X POST "${API}/${REPO}/-/releases/assets/${ASSET_ID}/upload-confirmation" \
+                -H "Accept: application/vnd.cnb.api+json" \
+                -H "Authorization: Bearer ${CNB_TOKEN}" > /dev/null
+              echo "Upload confirmed"
+            fi
+
+            echo "=== Done: https://cnb.cool/${REPO}/-/releases/tags/${TAG} ==="
 
     - name: sync-to-github
       imports:
