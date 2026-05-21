@@ -1,7 +1,44 @@
-# 自动同步 CNB 仓库变更到 GitHub
-# 密钥仓库：panda2877/secrets 中的 github-sync.yml
 $:
   push:
+    - name: build-and-test
+      docker:
+        image: rust:latest
+      env:
+        CARGO_TERM_COLOR: always
+      stages:
+        - name: install-system-deps
+          script: |
+            apt-get update
+            apt-get install -y pkg-config libssl-dev
+        - name: build
+          script: |
+            cargo build --workspace
+        - name: test
+          script: |
+            cargo test --workspace
+        - name: clippy
+          script: |
+            cargo clippy --workspace -- -D warnings
+          continue-on-error: true
+        - name: fmt
+          script: |
+            cargo fmt --all --check
+          continue-on-error: true
+
+    - name: release-build
+      docker:
+        image: rust:latest
+      env:
+        CARGO_TERM_COLOR: always
+      stages:
+        - name: install-system-deps
+          script: |
+            apt-get update
+            apt-get install -y pkg-config libssl-dev
+        - name: build-release
+          script: |
+            cargo build --release --workspace
+
     - name: sync-to-github
       imports:
         - https://cnb.cool/panda2877/secrets/-/blob/main/github-sync.yml

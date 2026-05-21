@@ -205,59 +205,77 @@ impl StreamHandle {
         }
     }
 
+    /// Process a single non-empty line from the buffer.
+    /// Returns Some(chunk) if parsed successfully, Some(error) on parse failure, or None if line is irrelevant.
+    fn parse_sse_line(line: &str) -> Option<Result<StreamChunk, ClientError>> {
+        // SSE format: "data: {json}" or "data: [DONE]"
+        if let Some(json_str) = line.strip_prefix("data: ") {
+            let json_str = json_str.trim();
+            if json_str == "[DONE]" {
+                // [DONE] is handled by caller
+                return None;
+            }
+            match serde_json::from_str::<StreamSseChunk>(json_str) {
+                Ok(parsed) => {
+                    let choice = parsed.choices.first();
+                    let delta = choice.and_then(|c| c.delta.as_ref());
+
+                    let delta_content = delta.and_then(|d| d.content.clone());
+                    let finish_reason = choice.and_then(|c| c.finish_reason.clone());
+
+                    let tool_call_deltas = delta
+                        .and_then(|d| d.tool_calls.as_ref())
+                        .map(|tcs| {
+                            tcs.iter()
+                                .map(|tc| ToolCallDelta {
+                                    index: tc.index,
+                                    id: tc.id.clone(),
+                                    name: tc.function.as_ref().and_then(|f| f.name.clone()),
+                                    arguments: tc.function.as_ref().and_then(|f| f.arguments.clone()),
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+
+                    Some(Ok(StreamChunk {
+                        id: parsed.id,
+                        model: parsed.model,
+                        delta_content,
+                        finish_reason,
+                        tool_call_deltas,
+                    }))
+                }
+                Err(e) => Some(Err(ClientError::Parse(e.to_string()))),
+            }
+        } else {
+            // Non-data lines (event:, retry:, comments, etc.) — ignore silently
+            None
+        }
+    }
+
     /// Read the next SSE chunk from the stream. Returns `None` when done.
     pub async fn next_chunk(&mut self) -> Option<Result<StreamChunk, ClientError>> {
         loop {
-            // Try to find a complete "data: " line in the buffer
+            // Try to find a complete line in the buffer
             while let Some(newline_pos) = self.buffer.find('\n') {
-                let line = self.buffer[..newline_pos].to_string();
+                let raw_line = self.buffer[..newline_pos].to_string();
                 self.buffer = self.buffer[newline_pos + 1..].to_string();
 
-                let line = line.trim().to_string();
-                if line.is_empty() {
+                let trimmed = raw_line.trim().to_string();
+                if trimmed.is_empty() {
                     continue;
                 }
 
-                // SSE format: "data: {json}" or "data: [DONE]"
-                if let Some(json_str) = line.strip_prefix("data: ") {
-                    let json_str = json_str.trim();
-                    if json_str == "[DONE]" {
-                        self.response = None;
-                        return None;
-                    }
-                    match serde_json::from_str::<StreamSseChunk>(json_str) {
-                        Ok(parsed) => {
-                            let choice = parsed.choices.first();
-                            let delta = choice.and_then(|c| c.delta.as_ref());
-
-                            let delta_content = delta.and_then(|d| d.content.clone());
-                            let finish_reason = choice.and_then(|c| c.finish_reason.clone());
-
-                            let tool_call_deltas = delta
-                                .and_then(|d| d.tool_calls.as_ref())
-                                .map(|tcs| {
-                                    tcs.iter()
-                                        .map(|tc| ToolCallDelta {
-                                            index: tc.index,
-                                            id: tc.id.clone(),
-                                            name: tc.function.as_ref().and_then(|f| f.name.clone()),
-                                            arguments: tc.function.as_ref().and_then(|f| f.arguments.clone()),
-                                        })
-                                        .collect()
-                                })
-                                .unwrap_or_default();
-
-                            return Some(Ok(StreamChunk {
-                                id: parsed.id,
-                                model: parsed.model,
-                                delta_content,
-                                finish_reason,
-                                tool_call_deltas,
-                            }));
-                        }
-                        Err(e) => return Some(Err(ClientError::Parse(e.to_string()))),
-                    }
+                // Check for the [DONE] sentinel
+                if trimmed.starts_with("data: ") && trimmed["data: ".len()..].trim() == "[DONE]" {
+                    self.response = None;
+                    return None;
                 }
+
+                if let Some(result) = Self::parse_sse_line(&trimmed) {
+                    return Some(result);
+                }
+                // Non-data lines are silently ignored; continue scanning
             }
 
             // Buffer has no complete line; read more data
@@ -268,7 +286,18 @@ impl StreamHandle {
                     self.buffer.push_str(&text);
                 }
                 Ok(None) => {
+                    // Stream is done — drain any remaining data in buffer
                     self.response = None;
+                    let remaining = self.buffer.trim().to_string();
+                    if !remaining.is_empty() {
+                        self.buffer.clear();
+                        if remaining.starts_with("data: ") && remaining["data: ".len()..].trim() == "[DONE]" {
+                            return None;
+                        }
+                        if let Some(result) = Self::parse_sse_line(&remaining) {
+                            return Some(result);
+                        }
+                    }
                     return None;
                 }
                 Err(e) => return Some(Err(ClientError::Network(e))),
@@ -611,6 +640,321 @@ mod tests {
         let mut handle = client.call_model_stream(&config, &req).await.unwrap();
         let result = handle.next_chunk().await.unwrap();
         assert!(result.is_err()); // parse error
+
+        mock.assert();
+    }
+
+    // --- Streaming completeness tests ---
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn stream_no_trailing_newline() {
+        /// Simulates a server that omits the final newline — the last data line lacks trailing \n.
+        /// Previous code would lose this data; the fix must capture it.
+        let mut server = start_mock_server().await;
+        let mock = server
+            .mock("POST", "/v1/chat/completions")
+            .with_header("Content-Type", "text/event-stream")
+            .with_body(
+                "data: {\"id\":\"cmpl-1\",\"model\":\"m\",\"choices\":[{\"delta\":{\"content\":\"Hello\"},\"finish_reason\":null}]}\n\
+                 data: {\"id\":\"cmpl-1\",\"model\":\"m\",\"choices\":[{\"delta\":{\"content\":\" world\"},\"finish_reason\":null}]}\n\
+                 data: [DONE]"   // <-- no trailing \n
+            )
+            .create();
+
+        let config = test_model_config(&format!("{}/v1/chat/completions", server.url()));
+        let client = ModelClient::new();
+        let req = test_request();
+
+        let mut handle = client.call_model_stream(&config, &req).await.unwrap();
+        let mut contents = Vec::new();
+        while let Some(result) = handle.next_chunk().await {
+            let chunk = result.unwrap();
+            if let Some(c) = chunk.delta_content {
+                contents.push(c);
+            }
+        }
+
+        assert_eq!(contents, vec!["Hello", " world"], "last chunk must not be lost");
+
+        mock.assert();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn stream_content_integrity_long_text() {
+        /// Long text split across many SSE events — verify full concatenation matches original.
+        let long_word = "A".repeat(1000);
+        let expected_text = (0..20).map(|i| format!("{} - chunk {}", long_word, i)).collect::<Vec<_>>().join("");
+
+        let mut events: Vec<String> = vec![
+            format!("data: {{\"id\":\"cmpl-1\",\"model\":\"m\",\"choices\":[{{\"delta\":{{\"content\":\"{}\"}},\"finish_reason\":null}}]}}", expected_text),
+        ];
+        events.push("data: [DONE]".to_string());
+        let body = events.join("\n") + "\n";
+
+        let mut server = start_mock_server().await;
+        let mock = server
+            .mock("POST", "/v1/chat/completions")
+            .with_header("Content-Type", "text/event-stream")
+            .with_body(&body)
+            .create();
+
+        let config = test_model_config(&format!("{}/v1/chat/completions", server.url()));
+        let client = ModelClient::new();
+        let req = test_request();
+
+        let mut handle = client.call_model_stream(&config, &req).await.unwrap();
+        let mut assembled = String::new();
+        while let Some(result) = handle.next_chunk().await {
+            let chunk = result.unwrap();
+            if let Some(c) = chunk.delta_content {
+                assembled.push_str(&c);
+            }
+        }
+
+        assert_eq!(assembled, expected_text, "long text must be fully preserved");
+        assert_eq!(assembled.len(), 1000 * 20 + 10 * 20, "exact byte count must match");
+
+        mock.assert();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn stream_multi_chunk_fragmentation() {
+        /// Simulate a line split across TCP chunks: the SSE JSON is delivered in fragments.
+        /// Since we use mockito (full body), we construct a scenario where data lines are
+        /// interleaved with the last line's content being fragmented across reads.
+        ///
+        /// Strategy: put multiple complete events, ending with no trailing \n to force the
+        /// buffer-drain path.
+        let json_payload = "{\"id\":\"cmpl-1\",\"model\":\"m\",\"choices\":[{\"delta\":{\"content\":\"final bit\"},\"finish_reason\":\"stop\"}]}";
+        let body = format!(
+            "data: {{\"id\":\"cmpl-1\",\"model\":\"m\",\"choices\":[{{\"delta\":{{\"content\":\"first \"}},\"finish_reason\":null}}]}}\n\
+             data: {{\"id\":\"cmpl-1\",\"model\":\"m\",\"choices\":[{{\"delta\":{{\"content\":\"second \"}},\"finish_reason\":null}}]}}\n\
+             data: {json_payload}\n\
+             data: [DONE]"
+        );
+
+        let mut server = start_mock_server().await;
+        let mock = server
+            .mock("POST", "/v1/chat/completions")
+            .with_header("Content-Type", "text/event-stream")
+            .with_body(&body)
+            .create();
+
+        let config = test_model_config(&format!("{}/v1/chat/completions", server.url()));
+        let client = ModelClient::new();
+        let req = test_request();
+
+        let mut handle = client.call_model_stream(&config, &req).await.unwrap();
+        let mut collected = Vec::new();
+        while let Some(result) = handle.next_chunk().await {
+            let chunk = result.unwrap();
+            collected.push(chunk.delta_content.unwrap_or_default());
+            if let Some(ref fr) = chunk.finish_reason {
+                assert_eq!(fr, "stop");
+            }
+        }
+
+        assert_eq!(collected, vec!["first ", "second ", "final bit"]);
+
+        mock.assert();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn stream_non_data_lines_ignored() {
+        /// SSE spec allows event:, retry:, id: lines and comments (starting with :).
+        /// These should be silently skipped.
+        let body = "\
+: this is a comment\nevent: ping\n\
+data: {\"id\":\"x\",\"model\":\"m\",\"choices\":[{\"delta\":{\"content\":\"only\"},\"finish_reason\":null}]}\n\
+retry: 3000\nid: custom-id\n\
+data: [DONE]\n";
+
+        let mut server = start_mock_server().await;
+        let mock = server
+            .mock("POST", "/v1/chat/completions")
+            .with_header("Content-Type", "text/event-stream")
+            .with_body(body)
+            .create();
+
+        let config = test_model_config(&format!("{}/v1/chat/completions", server.url()));
+        let client = ModelClient::new();
+        let req = test_request();
+
+        let mut handle = client.call_model_stream(&config, &req).await.unwrap();
+        let mut contents = Vec::new();
+        while let Some(result) = handle.next_chunk().await {
+            let chunk = result.unwrap();
+            if let Some(c) = chunk.delta_content {
+                contents.push(c);
+            }
+        }
+
+        assert_eq!(contents, vec!["only"], "non-data lines must be ignored");
+
+        mock.assert();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn stream_empty_data_field() {
+        /// Some providers send `data:\n` (colon but no value). Should not cause issues.
+        let body = "data: \ndata: {\"id\":\"x\",\"model\":\"m\",\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":null}]}\ndata: [DONE]\n";
+
+        let mut server = start_mock_server().await;
+        let mock = server
+            .mock("POST", "/v1/chat/completions")
+            .with_header("Content-Type", "text/event-stream")
+            .with_body(body)
+            .create();
+
+        let config = test_model_config(&format!("{}/v1/chat/completions", server.url()));
+        let client = ModelClient::new();
+        let req = test_request();
+
+        let mut handle = client.call_model_stream(&config, &req).await.unwrap();
+        let mut contents = Vec::new();
+        while let Some(result) = handle.next_chunk().await {
+            let chunk = result.unwrap();
+            if let Some(c) = chunk.delta_content {
+                contents.push(c);
+            }
+        }
+
+        assert_eq!(contents, vec!["ok"], "empty data: field should be skipped");
+
+        mock.assert();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn stream_only_done_with_no_newline() {
+        /// Minimal body: just "data: [DONE]" without trailing newline.
+        let mut server = start_mock_server().await;
+        let mock = server
+            .mock("POST", "/v1/chat/completions")
+            .with_header("Content-Type", "text/event-stream")
+            .with_body("data: [DONE]")
+            .create();
+
+        let config = test_model_config(&format!("{}/v1/chat/completions", server.url()));
+        let client = ModelClient::new();
+        let req = test_request();
+
+        let mut handle = client.call_model_stream(&config, &req).await.unwrap();
+        let chunk = handle.next_chunk().await;
+        assert!(chunk.is_none(), "[DONE] with no trailing newline should terminate cleanly");
+
+        mock.assert();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn stream_double_done_handling() {
+        /// Some providers may send [DONE] twice. First should terminate; second is a no-op.
+        let body = "data: {\"id\":\"x\",\"model\":\"m\",\"choices\":[{\"delta\":{\"content\":\"hello\"},\"finish_reason\":null}]}\ndata: [DONE]\ndata: [DONE]\n";
+
+        let mut server = start_mock_server().await;
+        let mock = server
+            .mock("POST", "/v1/chat/completions")
+            .with_header("Content-Type", "text/event-stream")
+            .with_body(body)
+            .create();
+
+        let config = test_model_config(&format!("{}/v1/chat/completions", server.url()));
+        let client = ModelClient::new();
+        let req = test_request();
+
+        let mut handle = client.call_model_stream(&config, &req).await.unwrap();
+        let mut chunks = 0;
+        let mut content = String::new();
+        while let Some(result) = handle.next_chunk().await {
+            let chunk = result.unwrap();
+            chunks += 1;
+            if let Some(c) = chunk.delta_content {
+                content.push_str(&c);
+            }
+        }
+
+        assert_eq!(content, "hello");
+        assert_eq!(chunks, 1, "only one data chunk should be yielded before [DONE]");
+
+        mock.assert();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn stream_carriage_return_newline() {
+        /// Some providers use \r\n instead of \n. Must be handled gracefully.
+        let body = "data: {\"id\":\"x\",\"model\":\"m\",\"choices\":[{\"delta\":{\"content\":\"A\"},\"finish_reason\":null}]}\r\ndata: {\"id\":\"x\",\"model\":\"m\",\"choices\":[{\"delta\":{\"content\":\"B\"},\"finish_reason\":null}]}\r\ndata: [DONE]\r\n";
+
+        let mut server = start_mock_server().await;
+        let mock = server
+            .mock("POST", "/v1/chat/completions")
+            .with_header("Content-Type", "text/event-stream")
+            .with_body(body)
+            .create();
+
+        let config = test_model_config(&format!("{}/v1/chat/completions", server.url()));
+        let client = ModelClient::new();
+        let req = test_request();
+
+        let mut handle = client.call_model_stream(&config, &req).await.unwrap();
+        let mut contents = Vec::new();
+        while let Some(result) = handle.next_chunk().await {
+            let chunk = result.unwrap();
+            if let Some(c) = chunk.delta_content {
+                contents.push(c);
+            }
+        }
+
+        assert_eq!(contents, vec!["A", "B"], "\\r\\n line endings must work");
+
+        mock.assert();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn stream_exact_content_verification() {
+        /// End-to-end content integrity: known multi-sentence text across events
+        let paragraph = "Rust is a multi-paradigm, general-purpose programming language that emphasizes performance, type safety, and concurrency.";
+        let words: Vec<&str> = paragraph.split_whitespace().collect();
+
+        // Build one data event per word, last word in final event
+        let mut events: Vec<String> = words[..words.len()-1].iter().map(|w| {
+            format!("data: {{\"id\":\"cmpl-1\",\"model\":\"m\",\"choices\":[{{\"delta\":{{\"content\":\"{} \"}},\"finish_reason\":null}}]}}", w)
+        }).collect();
+        let last_word = words.last().unwrap();
+        // Final chunk: finish_reason and last word
+        events.push(format!(
+            "data: {{\"id\":\"cmpl-1\",\"model\":\"m\",\"choices\":[{{\"delta\":{{\"content\":\"{}\"}},\"finish_reason\":\"stop\"}}],\"usage\":{{\"prompt_tokens\":800,\"completion_tokens\":{},\"total_tokens\":{}}}}}",
+            last_word, words.len(), 800 + words.len()
+        ));
+        events.push("data: [DONE]".to_string());
+        let body = events.join("\n") + "\n";
+
+        let mut server = start_mock_server().await;
+        let mock = server
+            .mock("POST", "/v1/chat/completions")
+            .with_header("Content-Type", "text/event-stream")
+            .with_body(&body)
+            .create();
+
+        let config = test_model_config(&format!("{}/v1/chat/completions", server.url()));
+        let client = ModelClient::new();
+        let req = test_request();
+
+        let mut handle = client.call_model_stream(&config, &req).await.unwrap();
+        let mut assembled = String::new();
+        let mut finish_reason_seen = false;
+        while let Some(result) = handle.next_chunk().await {
+            let chunk = result.unwrap();
+            if let Some(c) = chunk.delta_content {
+                assembled.push_str(&c);
+            }
+            if let Some(ref fr) = chunk.finish_reason {
+                assert_eq!(fr, "stop");
+                finish_reason_seen = true;
+            }
+        }
+
+        let expected = words.iter().map(|w| format!("{} ", w)).collect::<String>() + "concurrency.";
+        assert_eq!(assembled.trim(), "Rust is a multi-paradigm, general-purpose programming language that emphasizes performance, type safety, and concurrency.");
+        assert!(finish_reason_seen, "finish_reason must be yielded");
 
         mock.assert();
     }

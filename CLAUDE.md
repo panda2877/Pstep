@@ -23,6 +23,12 @@ cargo test
 cargo test -p pstep-core -- config    # 配置模块测试
 cargo test -p pstep-core -- client    # 模型调用测试
 
+# Lint 检查
+cargo clippy --workspace
+
+# 格式检查
+cargo fmt --all --check
+
 # Release 构建（单个可执行文件）
 cargo build --release
 ```
@@ -63,6 +69,19 @@ pstep-gateway/  # 网关层 (bin crate)
 - **`services/models/base.js`** — Non-streaming model calls via axios to configured provider URLs.
 - **`services/models/stream.js`** — Streaming (SSE) model calls; emits a `stats` event on completion with token usage data.
 - **`services/stats/db.js`** — SQLite database (`stats.db` at project root) for token usage logging. Table: `token_usage`.
+
+## CI / CNB 云原生构建
+
+每次 push 到任意分支时自动执行（配置在 `.cnb.yml`）：
+
+| Job | 说明 | 容器 |
+|-----|------|------|
+| `build-and-test` | `cargo build` → `cargo test` → `cargo clippy` → `cargo fmt` | `rust:latest` |
+| `release-build` | `cargo build --release`（Release 二进制） | `rust:latest` |
+| `sync-to-github` | 同步代码到 GitHub（`panda2877/Pstep`） | `alpine/git` |
+
+- clippy 和 fmt 为 `continue-on-error: true`，不阻断流水线
+- 需安装 `pkg-config` + `libssl-dev`（reqwest native-tls 依赖）
 
 ## Key Conventions
 
