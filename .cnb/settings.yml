@@ -1,0 +1,10 @@
+# 云原生开发配置，读取云原生启动按钮所在页面当前分支的 .cnb/settings.yml 配置
+workspace:
+  launch:
+    button:
+      name: 启动云原生开发
+      description: 点击此按钮启动云原生开发环境
+      hoverImage: .cnb/launch-hover.gif
+    cpus: 4
+    disabled: false
+    autoOpenWebIDE: false
