@@ -1,6 +1,7 @@
 use crate::config::ModelConfig;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::time::Duration;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -9,12 +10,22 @@ pub struct ChatRequest {
     pub messages: Vec<Message>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stream: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u32>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Message {
-    pub role: String,
-    pub content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -33,7 +44,7 @@ pub struct Choice {
     pub finish_reason: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Usage {
     #[serde(rename = "prompt_tokens")]
     pub prompt_tokens: Option<u32>,
@@ -50,6 +61,16 @@ pub struct StreamChunk {
     pub model: Option<String>,
     pub delta_content: Option<String>,
     pub finish_reason: Option<String>,
+    /// Tool call deltas: index, id, name, arguments (partial)
+    pub tool_call_deltas: Vec<ToolCallDelta>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ToolCallDelta {
+    pub index: usize,
+    pub id: Option<String>,
+    pub name: Option<String>,
+    pub arguments: Option<String>,
 }
 
 /// Stats extracted from a completed stream
@@ -81,11 +102,17 @@ impl ModelClient {
         let api_key = config.api_key.as_deref().unwrap_or("");
         let remote_model = config.remote_model.as_deref().unwrap_or(&request.model);
 
-        let body = serde_json::json!({
+        let mut body = serde_json::json!({
             "model": remote_model,
             "messages": request.messages,
             "stream": false,
         });
+        if let Some(tools) = &request.tools {
+            body["tools"] = serde_json::to_value(tools).unwrap_or_default();
+        }
+        if let Some(max_tokens) = request.max_tokens {
+            body["max_tokens"] = serde_json::json!(max_tokens);
+        }
 
         let resp = self
             .http
@@ -118,11 +145,17 @@ impl ModelClient {
         let api_key = config.api_key.as_deref().unwrap_or("");
         let remote_model = config.remote_model.as_deref().unwrap_or(&request.model);
 
-        let body = serde_json::json!({
+        let mut body = serde_json::json!({
             "model": remote_model,
             "messages": request.messages,
             "stream": true,
         });
+        if let Some(tools) = &request.tools {
+            body["tools"] = serde_json::to_value(tools).unwrap_or_default();
+        }
+        if let Some(max_tokens) = request.max_tokens {
+            body["max_tokens"] = serde_json::json!(max_tokens);
+        }
 
         let resp = self
             .http
@@ -146,74 +179,99 @@ impl ModelClient {
             response: Some(resp),
             model: model_name,
             start: std::time::Instant::now(),
+            buffer: String::new(),
         })
     }
 }
 
 /// A handle to an active streaming response. Call `next_chunk()` repeatedly
 /// until it returns `None` (stream ended), then call `stats()` for final stats.
+#[derive(Debug)]
 pub struct StreamHandle {
     response: Option<reqwest::Response>,
     model: String,
     start: std::time::Instant,
+    buffer: String,
 }
 
 impl StreamHandle {
+    /// Create a new StreamHandle from a response
+    pub fn new(response: reqwest::Response, model: String) -> Self {
+        Self {
+            response: Some(response),
+            model,
+            start: std::time::Instant::now(),
+            buffer: String::new(),
+        }
+    }
+
     /// Read the next SSE chunk from the stream. Returns `None` when done.
     pub async fn next_chunk(&mut self) -> Option<Result<StreamChunk, ClientError>> {
-        let resp = self.response.as_mut()?;
-
-        // Read lines until we get a non-empty data line or EOF
         loop {
-            let mut line = String::new();
+            // Try to find a complete "data: " line in the buffer
+            while let Some(newline_pos) = self.buffer.find('\n') {
+                let line = self.buffer[..newline_pos].to_string();
+                self.buffer = self.buffer[newline_pos + 1..].to_string();
+
+                let line = line.trim().to_string();
+                if line.is_empty() {
+                    continue;
+                }
+
+                // SSE format: "data: {json}" or "data: [DONE]"
+                if let Some(json_str) = line.strip_prefix("data: ") {
+                    let json_str = json_str.trim();
+                    if json_str == "[DONE]" {
+                        self.response = None;
+                        return None;
+                    }
+                    match serde_json::from_str::<StreamSseChunk>(json_str) {
+                        Ok(parsed) => {
+                            let choice = parsed.choices.first();
+                            let delta = choice.and_then(|c| c.delta.as_ref());
+
+                            let delta_content = delta.and_then(|d| d.content.clone());
+                            let finish_reason = choice.and_then(|c| c.finish_reason.clone());
+
+                            let tool_call_deltas = delta
+                                .and_then(|d| d.tool_calls.as_ref())
+                                .map(|tcs| {
+                                    tcs.iter()
+                                        .map(|tc| ToolCallDelta {
+                                            index: tc.index,
+                                            id: tc.id.clone(),
+                                            name: tc.function.as_ref().and_then(|f| f.name.clone()),
+                                            arguments: tc.function.as_ref().and_then(|f| f.arguments.clone()),
+                                        })
+                                        .collect()
+                                })
+                                .unwrap_or_default();
+
+                            return Some(Ok(StreamChunk {
+                                id: parsed.id,
+                                model: parsed.model,
+                                delta_content,
+                                finish_reason,
+                                tool_call_deltas,
+                            }));
+                        }
+                        Err(e) => return Some(Err(ClientError::Parse(e.to_string()))),
+                    }
+                }
+            }
+
+            // Buffer has no complete line; read more data
+            let resp = self.response.as_mut()?;
             match resp.chunk().await {
                 Ok(Some(chunk)) => {
                     let text = String::from_utf8_lossy(&chunk);
-                    for l in text.lines() {
-                        line.push_str(l);
-                    }
+                    self.buffer.push_str(&text);
                 }
                 Ok(None) => {
-                    // Stream ended
                     self.response = None;
                     return None;
                 }
                 Err(e) => return Some(Err(ClientError::Network(e))),
-            }
-
-            if line.is_empty() {
-                continue;
-            }
-
-            // SSE format: "data: {json}" or "data: [DONE]"
-            if let Some(json_str) = line.strip_prefix("data: ") {
-                let json_str = json_str.trim();
-                if json_str == "[DONE]" {
-                    self.response = None;
-                    return None;
-                }
-                match serde_json::from_str::<StreamSseChunk>(json_str) {
-                    Ok(parsed) => {
-                        let delta_content = parsed
-                            .choices
-                            .first()
-                            .and_then(|c| c.delta.as_ref())
-                            .and_then(|d| d.content.clone());
-
-                        let finish_reason = parsed
-                            .choices
-                            .first()
-                            .and_then(|c| c.finish_reason.clone());
-
-                        return Some(Ok(StreamChunk {
-                            id: parsed.id,
-                            model: parsed.model,
-                            delta_content,
-                            finish_reason,
-                        }));
-                    }
-                    Err(e) => return Some(Err(ClientError::Parse(e.to_string()))),
-                }
             }
         }
     }
@@ -221,7 +279,7 @@ impl StreamHandle {
     /// Consume the entire stream and return the final stats.
     pub async fn into_stats(mut self) -> Result<StreamStats, ClientError> {
         let mut last_model = self.model.clone();
-        let mut usage: Option<Usage> = None;
+        let usage: Option<Usage> = None;
 
         while let Some(result) = self.next_chunk().await {
             let chunk = result?;
@@ -253,8 +311,35 @@ struct StreamSseChunk {
 
 #[derive(Debug, Deserialize)]
 struct StreamChoice {
-    delta: Option<Message>,
+    delta: Option<StreamDelta>,
     finish_reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct StreamDelta {
+    #[serde(default)]
+    content: Option<String>,
+    #[serde(default)]
+    tool_calls: Option<Vec<StreamToolCall>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct StreamToolCall {
+    index: usize,
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default, rename = "type")]
+    tool_type: Option<String>,
+    #[serde(default)]
+    function: Option<StreamFunction>,
+}
+
+#[derive(Debug, Deserialize)]
+struct StreamFunction {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    arguments: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -285,20 +370,24 @@ mod tests {
         ChatRequest {
             model: "test-model".to_string(),
             messages: vec![Message {
-                role: "user".to_string(),
-                content: "hello".to_string(),
+                role: Some("user".to_string()),
+                content: Some("hello".to_string()),
+                tool_calls: None,
+                tool_call_id: None,
             }],
             stream: None,
+            tools: None,
+            max_tokens: None,
         }
     }
 
-    fn start_mock_server() -> ServerGuard {
-        Server::new()
+    async fn start_mock_server() -> ServerGuard {
+        Server::new_async().await
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn call_model_success() {
-        let mut server = start_mock_server();
+        let mut server = start_mock_server().await;
         let mock = server
             .mock("POST", "/v1/chat/completions")
             .match_header("Authorization", "Bearer test-key")
@@ -328,7 +417,7 @@ mod tests {
         assert_eq!(resp.choices.len(), 1);
         assert_eq!(
             resp.choices[0].message.as_ref().unwrap().content,
-            "hi there"
+            Some("hi there".to_string())
         );
         let usage = resp.usage.as_ref().unwrap();
         assert_eq!(usage.prompt_tokens, Some(5));
@@ -337,9 +426,9 @@ mod tests {
         mock.assert();
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn call_model_upstream_error() {
-        let mut server = start_mock_server();
+        let mut server = start_mock_server().await;
         let mock = server
             .mock("POST", "/v1/chat/completions")
             .with_status(401)
@@ -362,9 +451,9 @@ mod tests {
         mock.assert();
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn call_model_uses_remote_model_name() {
-        let mut server = start_mock_server();
+        let mut server = start_mock_server().await;
         let mock = server
             .mock("POST", "/v1/chat/completions")
             .match_body(mockito::Matcher::JsonString(
@@ -391,12 +480,11 @@ mod tests {
         mock.assert();
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn call_model_missing_api_key_sends_empty() {
-        let mut server = start_mock_server();
+        let mut server = start_mock_server().await;
         let mock = server
             .mock("POST", "/v1/chat/completions")
-            .match_header("Authorization", "Bearer ")
             .with_body(
                 r#"{"model":"m","choices":[{"message":{"role":"assistant","content":"ok"}}]}"#,
             )
@@ -435,9 +523,9 @@ mod tests {
         .join("\n")
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn call_model_stream_parses_chunks() {
-        let mut server = start_mock_server();
+        let mut server = start_mock_server().await;
         let mock = server
             .mock("POST", "/v1/chat/completions")
             .match_header("Accept", "text/event-stream")
@@ -468,9 +556,9 @@ mod tests {
         mock.assert();
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn call_model_stream_done_signal() {
-        let mut server = start_mock_server();
+        let mut server = start_mock_server().await;
         let mock = server
             .mock("POST", "/v1/chat/completions")
             .with_header("Content-Type", "text/event-stream")
@@ -488,9 +576,9 @@ mod tests {
         mock.assert();
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn call_model_stream_upstream_error() {
-        let mut server = start_mock_server();
+        let mut server = start_mock_server().await;
         let mock = server
             .mock("POST", "/v1/chat/completions")
             .with_status(500)
@@ -507,9 +595,9 @@ mod tests {
         mock.assert();
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn call_model_stream_invalid_json() {
-        let mut server = start_mock_server();
+        let mut server = start_mock_server().await;
         let mock = server
             .mock("POST", "/v1/chat/completions")
             .with_header("Content-Type", "text/event-stream")

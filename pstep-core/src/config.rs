@@ -16,7 +16,7 @@ pub struct ModelConfig {
     pub url: String,
     #[serde(rename = "apiKeyEnv")]
     pub api_key_env: Option<String>,
-    #[serde(default)]
+    #[serde(default, rename = "apiKey")]
     pub api_key: Option<String>,
     #[serde(rename = "remoteModel")]
     pub remote_model: Option<String>,

@@ -1,9 +1,10 @@
 use rusqlite::{params, Connection};
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
+#[derive(Clone)]
 pub struct StatsDb {
-    conn: Mutex<Connection>,
+    conn: Arc<Mutex<Connection>>,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -38,7 +39,7 @@ impl StatsDb {
             );",
         )?;
         Ok(Self {
-            conn: Mutex::new(conn),
+            conn: Arc::new(Mutex::new(conn)),
         })
     }
 
@@ -100,5 +101,107 @@ impl StatsDb {
         .unwrap()
         .filter_map(|r| r.ok())
         .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn log_and_recent_single_record() {
+        let dir = tempdir().unwrap();
+        let db = StatsDb::open(&dir.path().join("test.db")).unwrap();
+
+        db.log_usage("gpt-4", "gpt-3.5-turbo", true, 10, 20, 30, 150, None);
+
+        let records = db.recent(10);
+        assert_eq!(records.len(), 1);
+
+        let r = &records[0];
+        assert_eq!(r.model, "gpt-4");
+        assert_eq!(r.requested_model, "gpt-3.5-turbo");
+        assert!(r.success);
+        assert_eq!(r.input_tokens, 10);
+        assert_eq!(r.output_tokens, 20);
+        assert_eq!(r.total_tokens, 30);
+        assert_eq!(r.latency_ms, 150);
+        assert!(r.error.is_none());
+    }
+
+    #[test]
+    fn log_and_recent_multiple_records() {
+        let dir = tempdir().unwrap();
+        let db = StatsDb::open(&dir.path().join("test.db")).unwrap();
+
+        db.log_usage("model-a", "requested-a", true, 10, 20, 30, 100, None);
+        db.log_usage("model-b", "requested-b", false, 5, 5, 10, 200, Some("timeout"));
+        db.log_usage("model-c", "requested-c", true, 50, 100, 150, 50, None);
+
+        let records = db.recent(10);
+        assert_eq!(records.len(), 3);
+
+        // recent() returns in DESC order (newest first)
+        assert_eq!(records[0].model, "model-c");
+        assert_eq!(records[1].model, "model-b");
+        assert_eq!(records[2].model, "model-a");
+    }
+
+    #[test]
+    fn log_with_error_records_error_field() {
+        let dir = tempdir().unwrap();
+        let db = StatsDb::open(&dir.path().join("test.db")).unwrap();
+
+        db.log_usage("model-a", "model-a", false, 0, 0, 0, 0, Some("connection refused"));
+
+        let records = db.recent(10);
+        assert_eq!(records.len(), 1);
+        assert!(!records[0].success);
+        assert_eq!(records[0].error.as_deref(), Some("connection refused"));
+    }
+
+    #[test]
+    fn recent_respects_limit() {
+        let dir = tempdir().unwrap();
+        let db = StatsDb::open(&dir.path().join("test.db")).unwrap();
+
+        for i in 0..5u32 {
+            db.log_usage("model", "model", true, i, i, i, i as u64, None);
+        }
+
+        let records = db.recent(3);
+        assert_eq!(records.len(), 3);
+
+        // Should be the last 3 (id 5, 4, 3)
+        assert_eq!(records[0].id, 5);
+        assert_eq!(records[1].id, 4);
+        assert_eq!(records[2].id, 3);
+    }
+
+    #[test]
+    fn recent_empty_db_returns_empty() {
+        let dir = tempdir().unwrap();
+        let db = StatsDb::open(&dir.path().join("test.db")).unwrap();
+
+        let records = db.recent(10);
+        assert!(records.is_empty());
+    }
+
+    #[test]
+    fn db_auto_creates_table() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+
+        // First open creates the table
+        let db1 = StatsDb::open(&db_path).unwrap();
+        db1.log_usage("model", "model", true, 1, 1, 1, 1, None);
+        drop(db1);
+
+        // Second open reuses existing table
+        let db2 = StatsDb::open(&db_path).unwrap();
+        let records = db2.recent(10);
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].model, "model");
     }
 }
