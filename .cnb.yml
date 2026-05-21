@@ -150,4 +150,4 @@ $:
         - name: sync
           script: |
             git remote add github "$GITHUB_REMOTE" 2>/dev/null || true
-            git push github "$CNB_BRANCH"
+            git push --force github "$CNB_BRANCH"
