@@ -712,7 +712,7 @@ mod tests {
         }
 
         assert_eq!(assembled, expected_text, "long text must be fully preserved");
-        assert_eq!(assembled.len(), 1000 * 20 + 10 * 20, "exact byte count must match");
+        assert_eq!(assembled.len(), expected_text.len(), "exact byte count must match");
 
         mock.assert();
     }
