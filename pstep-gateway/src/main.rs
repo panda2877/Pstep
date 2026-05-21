@@ -603,7 +603,7 @@ fn create_anthropic_sse_stream(
         event_count += 1;
 
         let mut content = String::new();
-        let mut current_block_index: usize = 0;
+        let current_block_index: usize = 0;
         let mut has_text_block = false;
         let mut tool_calls: std::collections::HashMap<usize, (String, String, String)> = std::collections::HashMap::new(); // index -> (id, name, arguments)
         let mut tool_block_indices: Vec<usize> = Vec::new();
@@ -908,6 +908,7 @@ async fn delete_model(
 
 #[derive(Deserialize)]
 struct JsonRpcRequest {
+    #[expect(dead_code)]
     jsonrpc: Option<String>,
     id: Option<Value>,
     method: String,
@@ -975,7 +976,7 @@ async fn handle_ws_connection(
                 Ok(request) => {
                     let response = handle_rpc_request(request, &state).await;
                     let response_json = serde_json::to_string(&response)?;
-                    write.send(WsMessage::Text(response_json.into())).await?;
+                    write.send(WsMessage::Text(response_json)).await?;
                 }
                 Err(e) => {
                     tracing::error!(error = %e, "Failed to parse JSON-RPC request");
