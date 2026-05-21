@@ -42,7 +42,11 @@ impl GatewayConfig {
     pub fn load(config_dir: &Path) -> Result<Self, ConfigError> {
         let config_path = config_dir.join("models.json");
         let raw = fs::read_to_string(&config_path).map_err(|e| ConfigError::Io(e, config_path))?;
-        let mut config: GatewayConfig = serde_json::from_str(&raw).map_err(ConfigError::Parse)?;
+        Self::from_json(&raw)
+    }
+
+    pub fn from_json(json_str: &str) -> Result<Self, ConfigError> {
+        let mut config: GatewayConfig = serde_json::from_str(json_str).map_err(ConfigError::Parse)?;
 
         // Resolve apiKeyEnv → actual env var value
         for model in config.models.values_mut() {

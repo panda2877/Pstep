@@ -26,6 +26,8 @@ pub struct Message {
     pub tool_calls: Option<Vec<Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_content: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -52,6 +54,14 @@ pub struct Usage {
     pub completion_tokens: Option<u32>,
     #[serde(rename = "total_tokens")]
     pub total_tokens: Option<u32>,
+    #[serde(rename = "prompt_tokens_details", skip_serializing_if = "Option::is_none")]
+    pub prompt_tokens_details: Option<PromptTokensDetails>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PromptTokensDetails {
+    #[serde(rename = "cached_tokens", skip_serializing_if = "Option::is_none")]
+    pub cached_tokens: Option<u32>,
 }
 
 /// A single SSE chunk from a streaming response
@@ -415,6 +425,7 @@ mod tests {
                 content: Some("hello".to_string()),
                 tool_calls: None,
                 tool_call_id: None,
+                reasoning_content: None,
             }],
             stream: None,
             tools: None,

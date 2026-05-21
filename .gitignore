@@ -1,6 +1,9 @@
 # Rust
 target/
 
+# Config (contains API keys, use CNB secrets or create locally)
+config/models.json
+
 # Database
 *.db
 *.db-journal

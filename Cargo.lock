@@ -1260,7 +1260,7 @@ dependencies = [
 
 [[package]]
 name = "pstep-core"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "dotenvy",
@@ -1277,7 +1277,7 @@ dependencies = [
 
 [[package]]
 name = "pstep-gateway"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "async-stream",
  "axum",

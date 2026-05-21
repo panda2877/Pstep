@@ -1,10 +1,13 @@
 $:
   push:
     - name: build-and-test
+      imports:
+        - https://cnb.cool/panda2877/secrets/-/blob/main/pstep-config.yml
       docker:
         image: rust:latest
       env:
         CARGO_TERM_COLOR: always
+        PSTEP_CONFIG_JSON: ${{ secrets.pstep-config }}
       stages:
         - name: setup-cargo-registry
           script: |
@@ -39,10 +42,13 @@ $:
           continue-on-error: true
 
     - name: release-build
+      imports:
+        - https://cnb.cool/panda2877/secrets/-/blob/main/pstep-config.yml
       docker:
         image: rust:latest
       env:
         CARGO_TERM_COLOR: always
+        PSTEP_CONFIG_JSON: ${{ secrets.pstep-config }}
       stages:
         - name: setup-cargo-registry
           script: |
