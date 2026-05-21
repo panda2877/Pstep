@@ -74,18 +74,21 @@ $:
             echo "=== Publishing release ${TAG} ==="
 
             # 1. 创建 Release
-            RELEASE_JSON=$(python3 -c "
+            RELEASE_JSON=$(python3 << 'PYEOF'
 import json, sys
-body = json.dumps({'tag_name': '${TAG}', 'name': 'Pstep Gateway ${TAG}', 'body': 'Build #${CNB_BUILD_SN}'})
-print(body)
-")
+tag = "${TAG}"
+name = "Pstep Gateway ${TAG}"
+body = "Build #${CNB_BUILD_SN}"
+print(json.dumps({'tag_name': tag, 'name': name, 'body': body}))
+PYEOF
+)
             RESP=$(curl -s -X POST "${API}/${REPO}/-/releases" \
               -H "Accept: application/vnd.cnb.api+json" \
               -H "Authorization: Bearer ${CNB_TOKEN}" \
               -H "Content-Type: application/json" \
               -d "$RELEASE_JSON")
 
-            RELEASE_ID=$(echo "$RESP" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('id',''))" 2>/dev/null || echo "")
+            RELEASE_ID=$(echo "$RESP" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("id",""))' 2>/dev/null || echo "")
             if [ -z "$RELEASE_ID" ]; then
               echo "Release creation response: $RESP"
               echo "Check if tag already exists, skipping..."
@@ -94,19 +97,19 @@ print(body)
             echo "Release created: id=$RELEASE_ID"
 
             # 2. 获取上传 URL
-            UPLOAD_JSON=$(python3 -c "
+            UPLOAD_JSON=$(python3 << 'PYEOF'
 import json
-body = json.dumps({'name': 'pstep-gateway-x86_64-linux'})
-print(body)
-")
+print(json.dumps({'name': 'pstep-gateway-x86_64-linux'}))
+PYEOF
+)
             UPLOAD_RESP=$(curl -s -X POST "${API}/${REPO}/-/releases/${RELEASE_ID}/assets/upload-url" \
               -H "Accept: application/vnd.cnb.api+json" \
               -H "Authorization: Bearer ${CNB_TOKEN}" \
               -H "Content-Type: application/json" \
               -d "$UPLOAD_JSON")
 
-            UPLOAD_URL=$(echo "$UPLOAD_RESP" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('upload_url',''))" 2>/dev/null || echo "")
-            ASSET_ID=$(echo "$UPLOAD_RESP" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('id',''))" 2>/dev/null || echo "")
+            UPLOAD_URL=$(echo "$UPLOAD_RESP" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("upload_url",""))' 2>/dev/null || echo "")
+            ASSET_ID=$(echo "$UPLOAD_RESP" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("id",""))' 2>/dev/null || echo "")
 
             if [ -z "$UPLOAD_URL" ]; then
               echo "Upload URL response: $UPLOAD_RESP"
