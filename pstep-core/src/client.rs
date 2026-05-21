@@ -85,6 +85,12 @@ pub struct ModelClient {
     http: Client,
 }
 
+impl Default for ModelClient {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ModelClient {
     pub fn new() -> Self {
         let http = Client::builder()
@@ -329,12 +335,12 @@ impl StreamHandle {
     }
 }
 
-// Internal type for parsing SSE JSON chunks
 #[derive(Debug, Deserialize)]
 struct StreamSseChunk {
     id: Option<String>,
     model: Option<String>,
     choices: Vec<StreamChoice>,
+    #[expect(dead_code)]
     usage: Option<Usage>,
 }
 
@@ -358,6 +364,7 @@ struct StreamToolCall {
     #[serde(default)]
     id: Option<String>,
     #[serde(default, rename = "type")]
+    #[expect(dead_code)]
     tool_type: Option<String>,
     #[serde(default)]
     function: Option<StreamFunction>,

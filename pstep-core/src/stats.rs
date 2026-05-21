@@ -43,6 +43,7 @@ impl StatsDb {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn log_usage(
         &self,
         model: &str,

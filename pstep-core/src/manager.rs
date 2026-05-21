@@ -14,6 +14,12 @@ pub struct ModelStore {
     models: RwLock<HashMap<String, ModelEntry>>,
 }
 
+impl Default for ModelStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ModelStore {
     pub fn new() -> Self {
         Self {
@@ -91,6 +97,12 @@ pub trait ModelProvider: Send + Sync {
 /// OpenAI-compatible provider (works with any OpenAI API-compatible endpoint)
 pub struct OpenAIProvider {
     client: reqwest::Client,
+}
+
+impl Default for OpenAIProvider {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl OpenAIProvider {
