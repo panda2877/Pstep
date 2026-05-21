@@ -6,6 +6,18 @@ $:
       env:
         CARGO_TERM_COLOR: always
       stages:
+        - name: setup-cargo-registry
+          script: |
+            # 用 CNB 制品库加速 cargo 依赖下载
+            # 制品库: https://cnb.cool/panda2877/pstep-cargo
+            mkdir -p ~/.cargo
+            cat > ~/.cargo/config.toml << EOF
+            [source.crates-io]
+            replace-with = "cnb-cargo"
+
+            [source.cnb-cargo]
+            registry = "sparse+https://token:${CNB_TOKEN}@cnb.cool/api/packages/panda2877/pstep-cargo/cargo"
+            EOF
         - name: install-system-deps
           script: |
             apt-get update
@@ -31,6 +43,16 @@ $:
       env:
         CARGO_TERM_COLOR: always
       stages:
+        - name: setup-cargo-registry
+          script: |
+            mkdir -p ~/.cargo
+            cat > ~/.cargo/config.toml << EOF
+            [source.crates-io]
+            replace-with = "cnb-cargo"
+
+            [source.cnb-cargo]
+            registry = "sparse+https://token:${CNB_TOKEN}@cnb.cool/api/packages/panda2877/pstep-cargo/cargo"
+            EOF
         - name: install-system-deps
           script: |
             apt-get update
