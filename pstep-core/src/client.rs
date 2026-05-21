@@ -237,7 +237,10 @@ impl StreamHandle {
                                     index: tc.index,
                                     id: tc.id.clone(),
                                     name: tc.function.as_ref().and_then(|f| f.name.clone()),
-                                    arguments: tc.function.as_ref().and_then(|f| f.arguments.clone()),
+                                    arguments: tc
+                                        .function
+                                        .as_ref()
+                                        .and_then(|f| f.arguments.clone()),
                                 })
                                 .collect()
                         })
@@ -297,7 +300,9 @@ impl StreamHandle {
                     let remaining = self.buffer.trim().to_string();
                     if !remaining.is_empty() {
                         self.buffer.clear();
-                        if remaining.starts_with("data: ") && remaining["data: ".len()..].trim() == "[DONE]" {
+                        if remaining.starts_with("data: ")
+                            && remaining["data: ".len()..].trim() == "[DONE]"
+                        {
                             return None;
                         }
                         if let Some(result) = Self::parse_sse_line(&remaining) {
@@ -681,7 +686,11 @@ mod tests {
             }
         }
 
-        assert_eq!(contents, vec!["Hello", " world"], "last chunk must not be lost");
+        assert_eq!(
+            contents,
+            vec!["Hello", " world"],
+            "last chunk must not be lost"
+        );
 
         mock.assert();
     }
@@ -690,11 +699,15 @@ mod tests {
     async fn stream_content_integrity_long_text() {
         // Long text split across many SSE events — verify full concatenation matches original.
         let long_word = "A".repeat(1000);
-        let expected_text = (0..20).map(|i| format!("{} - chunk {}", long_word, i)).collect::<Vec<_>>().join("");
+        let expected_text = (0..20)
+            .map(|i| format!("{} - chunk {}", long_word, i))
+            .collect::<Vec<_>>()
+            .join("");
 
-        let mut events: Vec<String> = vec![
-            format!("data: {{\"id\":\"cmpl-1\",\"model\":\"m\",\"choices\":[{{\"delta\":{{\"content\":\"{}\"}},\"finish_reason\":null}}]}}", expected_text),
-        ];
+        let mut events: Vec<String> = vec![format!(
+            "data: {{\"id\":\"cmpl-1\",\"model\":\"m\",\"choices\":[{{\"delta\":{{\"content\":\"{}\"}},\"finish_reason\":null}}]}}",
+            expected_text
+        )];
         events.push("data: [DONE]".to_string());
         let body = events.join("\n") + "\n";
 
@@ -718,8 +731,15 @@ mod tests {
             }
         }
 
-        assert_eq!(assembled, expected_text, "long text must be fully preserved");
-        assert_eq!(assembled.len(), expected_text.len(), "exact byte count must match");
+        assert_eq!(
+            assembled, expected_text,
+            "long text must be fully preserved"
+        );
+        assert_eq!(
+            assembled.len(),
+            expected_text.len(),
+            "exact byte count must match"
+        );
 
         mock.assert();
     }
@@ -847,7 +867,10 @@ data: [DONE]\n";
 
         let mut handle = client.call_model_stream(&config, &req).await.unwrap();
         let chunk = handle.next_chunk().await;
-        assert!(chunk.is_none(), "[DONE] with no trailing newline should terminate cleanly");
+        assert!(
+            chunk.is_none(),
+            "[DONE] with no trailing newline should terminate cleanly"
+        );
 
         mock.assert();
     }
@@ -880,7 +903,10 @@ data: [DONE]\n";
         }
 
         assert_eq!(content, "hello");
-        assert_eq!(chunks, 1, "only one data chunk should be yielded before [DONE]");
+        assert_eq!(
+            chunks, 1,
+            "only one data chunk should be yielded before [DONE]"
+        );
 
         mock.assert();
     }
@@ -959,8 +985,12 @@ data: [DONE]\n";
             }
         }
 
-        let _expected = words.iter().map(|w| format!("{} ", w)).collect::<String>() + "concurrency.";
-        assert_eq!(assembled.trim(), "Rust is a multi-paradigm, general-purpose programming language that emphasizes performance, type safety, and concurrency.");
+        let _expected =
+            words.iter().map(|w| format!("{} ", w)).collect::<String>() + "concurrency.";
+        assert_eq!(
+            assembled.trim(),
+            "Rust is a multi-paradigm, general-purpose programming language that emphasizes performance, type safety, and concurrency."
+        );
         assert!(finish_reason_seen, "finish_reason must be yielded");
 
         mock.assert();

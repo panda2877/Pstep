@@ -1,4 +1,4 @@
-use crate::client::{ChatRequest, ChatCompletionResponse, ClientError, StreamHandle};
+use crate::client::{ChatCompletionResponse, ChatRequest, ClientError, StreamHandle};
 use crate::config::ModelConfig;
 use std::collections::HashMap;
 use std::sync::RwLock;
@@ -50,8 +50,11 @@ impl ModelStore {
     pub fn load_from_config(config: &crate::config::GatewayConfig) -> Self {
         let store = Self::new();
         for (name, model_config) in &config.models {
-            let fallback_chain = config.get_fallback_chain(name)
-                .into_iter().map(String::from).collect();
+            let fallback_chain = config
+                .get_fallback_chain(name)
+                .into_iter()
+                .map(String::from)
+                .collect();
             store.add(ModelEntry {
                 name: name.clone(),
                 config: model_config.clone(),
@@ -312,11 +315,20 @@ mod tests {
     #[test]
     fn store_load_from_config() {
         let mut models = HashMap::new();
-        models.insert("gpt-4".to_string(), test_model_config("http://api.openai.com"));
-        models.insert("gpt-3.5-turbo".to_string(), test_model_config("http://api.openai.com"));
+        models.insert(
+            "gpt-4".to_string(),
+            test_model_config("http://api.openai.com"),
+        );
+        models.insert(
+            "gpt-3.5-turbo".to_string(),
+            test_model_config("http://api.openai.com"),
+        );
 
         let mut fallback_chains = HashMap::new();
-        fallback_chains.insert("default".to_string(), vec!["gpt-4".to_string(), "gpt-3.5-turbo".to_string()]);
+        fallback_chains.insert(
+            "default".to_string(),
+            vec!["gpt-4".to_string(), "gpt-3.5-turbo".to_string()],
+        );
 
         let config = crate::config::GatewayConfig {
             models,

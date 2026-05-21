@@ -1,5 +1,5 @@
-pub mod config;
 pub mod client;
+pub mod config;
 pub mod fallback;
-pub mod stats;
 pub mod manager;
+pub mod stats;

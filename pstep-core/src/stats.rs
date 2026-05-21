@@ -1,4 +1,4 @@
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
@@ -137,7 +137,16 @@ mod tests {
         let db = StatsDb::open(&dir.path().join("test.db")).unwrap();
 
         db.log_usage("model-a", "requested-a", true, 10, 20, 30, 100, None);
-        db.log_usage("model-b", "requested-b", false, 5, 5, 10, 200, Some("timeout"));
+        db.log_usage(
+            "model-b",
+            "requested-b",
+            false,
+            5,
+            5,
+            10,
+            200,
+            Some("timeout"),
+        );
         db.log_usage("model-c", "requested-c", true, 50, 100, 150, 50, None);
 
         let records = db.recent(10);
@@ -154,7 +163,16 @@ mod tests {
         let dir = tempdir().unwrap();
         let db = StatsDb::open(&dir.path().join("test.db")).unwrap();
 
-        db.log_usage("model-a", "model-a", false, 0, 0, 0, 0, Some("connection refused"));
+        db.log_usage(
+            "model-a",
+            "model-a",
+            false,
+            0,
+            0,
+            0,
+            0,
+            Some("connection refused"),
+        );
 
         let records = db.recent(10);
         assert_eq!(records.len(), 1);

@@ -1,16 +1,16 @@
 use axum::extract::{Path, State};
-use axum::response::sse::{Event, Sse};
 use axum::response::IntoResponse;
+use axum::response::sse::{Event, Sse};
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use futures::stream::Stream;
-use pstep_core::client::{ChatRequest, ModelClient, Message};
+use pstep_core::client::{ChatRequest, Message, ModelClient};
 use pstep_core::config::{GatewayConfig, ModelConfig};
 use pstep_core::fallback::{handle_stream_with_fallback, handle_with_fallback};
 use pstep_core::manager::{ModelEntry, ModelStore};
 use pstep_core::stats::StatsDb;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::convert::Infallible;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -28,8 +28,7 @@ struct AppState {
 async fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
 
@@ -123,10 +122,7 @@ async fn shutdown_signal() {
 async fn chat_completions(
     State(state): State<Arc<AppState>>,
     Json(request): Json<ChatRequest>,
-) -> Result<
-    axum::response::Response,
-    (axum::http::StatusCode, Json<Value>),
-> {
+) -> Result<axum::response::Response, (axum::http::StatusCode, Json<Value>)> {
     let is_stream = request.stream.unwrap_or(false);
 
     if is_stream {
@@ -138,7 +134,8 @@ async fn chat_completions(
                 let requested_model = result.requested_model.clone();
                 let stats = state.stats.clone();
 
-                let stream = create_sse_stream(result.handle, model_name, requested_model, stats, start);
+                let stream =
+                    create_sse_stream(result.handle, model_name, requested_model, stats, start);
 
                 Ok(Sse::new(stream).into_response())
             }
@@ -231,22 +228,26 @@ fn convert_anthropic_messages_to_openai(msgs: &[AnthropicMessage]) -> Vec<Messag
             // Handle tool_result messages (role: "user" with tool_result content)
             if m.role == "user" && m.content.is_array() {
                 let blocks = m.content.as_array().unwrap();
-                let has_tool_results = blocks.iter().any(|b| {
-                    b.get("type").and_then(|t| t.as_str()) == Some("tool_result")
-                });
+                let has_tool_results = blocks
+                    .iter()
+                    .any(|b| b.get("type").and_then(|t| t.as_str()) == Some("tool_result"));
                 if has_tool_results {
                     return blocks
                         .iter()
                         .filter_map(|b| {
                             if b.get("type").and_then(|t| t.as_str()) == Some("tool_result") {
-                                let _tool_use_id = b.get("tool_use_id").and_then(|v| v.as_str()).unwrap_or("");
-                                let content = b.get("content").and_then(|c| {
-                                    if c.is_string() {
-                                        c.as_str().map(String::from)
-                                    } else {
-                                        serde_json::to_string(c).ok()
-                                    }
-                                }).unwrap_or_default();
+                                let _tool_use_id =
+                                    b.get("tool_use_id").and_then(|v| v.as_str()).unwrap_or("");
+                                let content = b
+                                    .get("content")
+                                    .and_then(|c| {
+                                        if c.is_string() {
+                                            c.as_str().map(String::from)
+                                        } else {
+                                            serde_json::to_string(c).ok()
+                                        }
+                                    })
+                                    .unwrap_or_default();
                                 Some(Message {
                                     role: Some("tool".to_string()),
                                     content: Some(content),
@@ -275,9 +276,9 @@ fn convert_anthropic_messages_to_openai(msgs: &[AnthropicMessage]) -> Vec<Messag
             // Handle assistant messages with tool_use content
             if m.role == "assistant" && m.content.is_array() {
                 let blocks = m.content.as_array().unwrap();
-                let has_tool_use = blocks.iter().any(|b| {
-                    b.get("type").and_then(|t| t.as_str()) == Some("tool_use")
-                });
+                let has_tool_use = blocks
+                    .iter()
+                    .any(|b| b.get("type").and_then(|t| t.as_str()) == Some("tool_use"));
                 if has_tool_use {
                     let mut result = Vec::new();
                     // Collect text content
@@ -362,7 +363,10 @@ fn convert_anthropic_tools_to_openai(tools: &[Value]) -> Vec<Value> {
         .iter()
         .filter_map(|tool| {
             let name = tool.get("name")?.as_str()?;
-            let description = tool.get("description").and_then(|d| d.as_str()).unwrap_or("");
+            let description = tool
+                .get("description")
+                .and_then(|d| d.as_str())
+                .unwrap_or("");
             let input_schema = tool.get("input_schema").cloned().unwrap_or(json!({}));
 
             Some(json!({
@@ -388,7 +392,10 @@ fn convert_openai_tool_calls_to_anthropic(tool_calls: &Value) -> Vec<Value> {
             let id = tc.get("id").and_then(|v| v.as_str())?;
             let func = tc.get("function")?;
             let name = func.get("name").and_then(|v| v.as_str())?;
-            let args_str = func.get("arguments").and_then(|v| v.as_str()).unwrap_or("{}");
+            let args_str = func
+                .get("arguments")
+                .and_then(|v| v.as_str())
+                .unwrap_or("{}");
             let input: Value = serde_json::from_str(args_str).unwrap_or(json!({}));
 
             Some(json!({
@@ -404,10 +411,7 @@ fn convert_openai_tool_calls_to_anthropic(tool_calls: &Value) -> Vec<Value> {
 async fn anthropic_messages(
     State(state): State<Arc<AppState>>,
     Json(request): Json<AnthropicMessageRequest>,
-) -> Result<
-    axum::response::Response,
-    (axum::http::StatusCode, Json<Value>),
-> {
+) -> Result<axum::response::Response, (axum::http::StatusCode, Json<Value>)> {
     let is_stream = request.stream.unwrap_or(false);
     tracing::info!(model = %request.model, stream = is_stream, msgs = request.messages.len(), "anthropic_messages request");
 
@@ -442,7 +446,10 @@ async fn anthropic_messages(
     openai_messages.extend(convert_anthropic_messages_to_openai(&request.messages));
 
     // Convert Anthropic tools to OpenAI format
-    let openai_tools = request.tools.as_ref().map(|t| convert_anthropic_tools_to_openai(t));
+    let openai_tools = request
+        .tools
+        .as_ref()
+        .map(|t| convert_anthropic_tools_to_openai(t));
 
     let chat_request = ChatRequest {
         model: request.model.clone(),
@@ -478,7 +485,9 @@ async fn anthropic_messages(
                     "unknown",
                     &request.model,
                     false,
-                    0, 0, 0,
+                    0,
+                    0,
+                    0,
                     latency,
                     Some(&e.to_string()),
                 );
@@ -505,7 +514,10 @@ async fn anthropic_messages(
                     None,
                 );
 
-                let content_text = result.data.choices.first()
+                let content_text = result
+                    .data
+                    .choices
+                    .first()
                     .and_then(|c| c.message.as_ref())
                     .and_then(|m| m.content.as_deref())
                     .unwrap_or("");
@@ -527,7 +539,9 @@ async fn anthropic_messages(
                 let stop_reason = if let Some(msg) = message {
                     if let Some(tool_calls) = &msg.tool_calls {
                         if !tool_calls.is_empty() {
-                            let tool_blocks = convert_openai_tool_calls_to_anthropic(&Value::Array(tool_calls.clone()));
+                            let tool_blocks = convert_openai_tool_calls_to_anthropic(
+                                &Value::Array(tool_calls.clone()),
+                            );
                             content_blocks.extend(tool_blocks);
                             "tool_use"
                         } else {
@@ -552,7 +566,8 @@ async fn anthropic_messages(
                         "input_tokens": input_tokens,
                         "output_tokens": output_tokens
                     }
-                })).into_response())
+                }))
+                .into_response())
             }
             Err(e) => {
                 let latency = start.elapsed().as_millis() as u64;
@@ -561,7 +576,9 @@ async fn anthropic_messages(
                     "unknown",
                     &request.model,
                     false,
-                    0, 0, 0,
+                    0,
+                    0,
+                    0,
                     latency,
                     Some(&e.to_string()),
                 );
@@ -804,9 +821,7 @@ async fn health() -> Json<Value> {
     Json(json!({ "status": "ok", "service": "Pstep Gateway" }))
 }
 
-async fn stats_handler(
-    State(state): State<Arc<AppState>>,
-) -> Json<Value> {
+async fn stats_handler(State(state): State<Arc<AppState>>) -> Json<Value> {
     let records = state.stats.recent(10);
     Json(serde_json::to_value(&records).unwrap())
 }
@@ -834,9 +849,7 @@ struct CreateModelRequest {
     url: Option<String>,
 }
 
-async fn list_models(
-    State(state): State<Arc<AppState>>,
-) -> Json<Value> {
+async fn list_models(State(state): State<Arc<AppState>>) -> Json<Value> {
     let names = state.models.list();
     let models: Vec<ModelInfo> = names
         .iter()
@@ -858,9 +871,9 @@ async fn upsert_model(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CreateModelRequest>,
 ) -> Result<Json<Value>, (axum::http::StatusCode, Json<Value>)> {
-    let url = req.url.unwrap_or_else(|| {
-        format!("{}/v1/chat/completions", state.config.server.port)
-    });
+    let url = req
+        .url
+        .unwrap_or_else(|| format!("{}/v1/chat/completions", state.config.server.port));
 
     let config = ModelConfig {
         url,
@@ -988,10 +1001,7 @@ async fn handle_ws_connection(
     Ok(())
 }
 
-async fn handle_rpc_request(
-    request: JsonRpcRequest,
-    state: &Arc<AppState>,
-) -> JsonRpcResponse {
+async fn handle_rpc_request(request: JsonRpcRequest, state: &Arc<AppState>) -> JsonRpcResponse {
     let jsonrpc = "2.0";
 
     match request.method.as_str() {
@@ -1030,7 +1040,10 @@ async fn handle_rpc_request(
 
             match handle_with_fallback(&state.config, &state.client, &chat_request).await {
                 Ok(result) => {
-                    let content = result.data.choices.first()
+                    let content = result
+                        .data
+                        .choices
+                        .first()
                         .and_then(|c| c.message.as_ref())
                         .and_then(|m| m.content.as_deref())
                         .unwrap_or("");

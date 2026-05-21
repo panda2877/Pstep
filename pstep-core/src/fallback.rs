@@ -1,4 +1,4 @@
-use crate::client::{ChatRequest, ChatCompletionResponse, ModelClient, StreamHandle};
+use crate::client::{ChatCompletionResponse, ChatRequest, ModelClient, StreamHandle};
 use crate::config::GatewayConfig;
 
 #[derive(Debug)]
@@ -267,11 +267,7 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn fallback_empty_chain() {
         let server = start_mock_server().await;
-        let config = test_config_with_chain(
-            &server.url(),
-            vec![("model-a", "model-a")],
-            vec![],
-        );
+        let config = test_config_with_chain(&server.url(), vec![("model-a", "model-a")], vec![]);
         let client = ModelClient::new();
         let req = test_request("nonexistent");
 

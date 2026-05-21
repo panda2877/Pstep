@@ -42,8 +42,7 @@ impl GatewayConfig {
     pub fn load(config_dir: &Path) -> Result<Self, ConfigError> {
         let config_path = config_dir.join("models.json");
         let raw = fs::read_to_string(&config_path).map_err(|e| ConfigError::Io(e, config_path))?;
-        let mut config: GatewayConfig =
-            serde_json::from_str(&raw).map_err(ConfigError::Parse)?;
+        let mut config: GatewayConfig = serde_json::from_str(&raw).map_err(ConfigError::Parse)?;
 
         // Resolve apiKeyEnv → actual env var value
         for model in config.models.values_mut() {
@@ -135,7 +134,10 @@ mod tests {
         assert!(config.models.contains_key("openai"));
 
         assert_eq!(config.fallback_chains.len(), 2);
-        assert_eq!(config.fallback_chains["default"], vec!["deepseek", "openai"]);
+        assert_eq!(
+            config.fallback_chains["default"],
+            vec!["deepseek", "openai"]
+        );
         assert_eq!(config.fallback_chains["fast"], vec!["deepseek"]);
 
         assert_eq!(config.server.port, 8080);
@@ -218,7 +220,9 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         write_config(tmp.path(), sample_config_json());
 
-        unsafe { std::env::set_var("TEST_CFG_DEEPSEEK_KEY", "sk-test-123"); }
+        unsafe {
+            std::env::set_var("TEST_CFG_DEEPSEEK_KEY", "sk-test-123");
+        }
 
         // Patch config to use our test env var
         let patched = sample_config_json().replace("DEEPSEEK_API_KEY", "TEST_CFG_DEEPSEEK_KEY");
@@ -228,7 +232,9 @@ mod tests {
         let ds = config.models.get("deepseek").unwrap();
         assert_eq!(ds.api_key.as_deref(), Some("sk-test-123"));
 
-        unsafe { std::env::remove_var("TEST_CFG_DEEPSEEK_KEY"); }
+        unsafe {
+            std::env::remove_var("TEST_CFG_DEEPSEEK_KEY");
+        }
     }
 
     #[test]
@@ -237,7 +243,9 @@ mod tests {
         write_config(tmp.path(), sample_config_json());
 
         // Ensure the env var does NOT exist
-        unsafe { std::env::remove_var("DEEPSEEK_API_KEY"); }
+        unsafe {
+            std::env::remove_var("DEEPSEEK_API_KEY");
+        }
 
         let config = GatewayConfig::load(tmp.path()).unwrap();
         let ds = config.models.get("deepseek").unwrap();
