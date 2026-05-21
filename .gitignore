@@ -16,3 +16,6 @@ target/
 
 # AGENTS.md
 AGENTS.md
+
+# Build logs
+docs/logs/
