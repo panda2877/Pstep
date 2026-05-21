@@ -57,7 +57,7 @@ $:
         - name: install-system-deps
           script: |
             apt-get update
-            apt-get install -y pkg-config libssl-dev python3
+            apt-get install -y pkg-config libssl-dev
             rustup component add clippy rustfmt
         - name: build-release
           script: |
@@ -73,58 +73,49 @@ $:
 
             echo "=== Publishing release ${TAG} ==="
 
-            # 1. 创建 Release
-            RELEASE_JSON=$(python3 << 'PYEOF'
-import json, sys
-tag = "${TAG}"
-name = "Pstep Gateway ${TAG}"
-body = "Build #${CNB_BUILD_SN}"
-print(json.dumps({'tag_name': tag, 'name': name, 'body': body}))
-PYEOF
-)
+            # 1. 创建 Release（用 printf 避免 YAML 特殊字符）
+            RELEASE_JSON=$(printf '{"tag_name":"%s","name":"Pstep Gateway %s","body":"Build %s"}' \
+              "${TAG}" "${TAG}" "${CNB_BUILD_SN}")
             RESP=$(curl -s -X POST "${API}/${REPO}/-/releases" \
               -H "Accept: application/vnd.cnb.api+json" \
               -H "Authorization: Bearer ${CNB_TOKEN}" \
               -H "Content-Type: application/json" \
-              -d "$RELEASE_JSON")
+              -d "${RELEASE_JSON}")
 
-            RELEASE_ID=$(echo "$RESP" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("id",""))' 2>/dev/null || echo "")
-            if [ -z "$RELEASE_ID" ]; then
-              echo "Release creation response: $RESP"
-              echo "Check if tag already exists, skipping..."
+            # 解析 release id（用 grep + sed，无 YAML 冲突）
+            RELEASE_ID=$(echo "${RESP}" | grep -o '"id":"[^"]*"' | cut -d'"' -f4 | head -1)
+            if [ -z "${RELEASE_ID}" ]; then
+              echo "Release creation response: ${RESP}"
+              echo "Tag may already exist, skipping..."
               exit 0
             fi
-            echo "Release created: id=$RELEASE_ID"
+            echo "Release created: id=${RELEASE_ID}"
 
             # 2. 获取上传 URL
-            UPLOAD_JSON=$(python3 << 'PYEOF'
-import json
-print(json.dumps({'name': 'pstep-gateway-x86_64-linux'}))
-PYEOF
-)
-            UPLOAD_RESP=$(curl -s -X POST "${API}/${REPO}/-/releases/${RELEASE_ID}/assets/upload-url" \
+            UPLOAD_RESP=$(curl -s -X POST \
+              "${API}/${REPO}/-/releases/${RELEASE_ID}/assets/upload-url" \
               -H "Accept: application/vnd.cnb.api+json" \
               -H "Authorization: Bearer ${CNB_TOKEN}" \
               -H "Content-Type: application/json" \
-              -d "$UPLOAD_JSON")
+              -d '{"name":"pstep-gateway-x86_64-linux"}')
 
-            UPLOAD_URL=$(echo "$UPLOAD_RESP" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("upload_url",""))' 2>/dev/null || echo "")
-            ASSET_ID=$(echo "$UPLOAD_RESP" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("id",""))' 2>/dev/null || echo "")
+            UPLOAD_URL=$(echo "${UPLOAD_RESP}" | grep -o '"upload_url":"[^"]*"' | cut -d'"' -f4 | head -1)
+            ASSET_ID=$(echo "${UPLOAD_RESP}" | grep -o '"id":"[^"]*"' | cut -d'"' -f4 | head -1)
 
-            if [ -z "$UPLOAD_URL" ]; then
-              echo "Upload URL response: $UPLOAD_RESP"
+            if [ -z "${UPLOAD_URL}" ]; then
+              echo "Upload URL response: ${UPLOAD_RESP}"
               exit 1
             fi
             echo "Upload URL obtained"
 
             # 3. 上传二进制
-            curl -s -X PUT "$UPLOAD_URL" \
+            curl -s -X PUT "${UPLOAD_URL}" \
               -H "Content-Type: application/octet-stream" \
-              --data-binary @"$BINARY"
+              --data-binary @"${BINARY}"
             echo "Binary uploaded"
 
             # 4. 确认上传
-            if [ -n "$ASSET_ID" ]; then
+            if [ -n "${ASSET_ID}" ]; then
               curl -s -X POST "${API}/${REPO}/-/releases/assets/${ASSET_ID}/upload-confirmation" \
                 -H "Accept: application/vnd.cnb.api+json" \
                 -H "Authorization: Bearer ${CNB_TOKEN}" > /dev/null
