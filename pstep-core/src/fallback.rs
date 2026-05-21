@@ -156,8 +156,12 @@ mod tests {
             messages: vec![crate::client::Message {
                 role: Some("user".to_string()),
                 content: Some("hello".to_string()),
+                tool_calls: None,
+                tool_call_id: None,
             }],
             stream: None,
+            tools: None,
+            max_tokens: None,
         }
     }
 

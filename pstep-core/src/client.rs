@@ -648,8 +648,8 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn stream_no_trailing_newline() {
-        /// Simulates a server that omits the final newline — the last data line lacks trailing \n.
-        /// Previous code would lose this data; the fix must capture it.
+        // Simulates a server that omits the final newline — the last data line lacks trailing \n.
+        // Previous code would lose this data; the fix must capture it.
         let mut server = start_mock_server().await;
         let mock = server
             .mock("POST", "/v1/chat/completions")
@@ -681,7 +681,7 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn stream_content_integrity_long_text() {
-        /// Long text split across many SSE events — verify full concatenation matches original.
+        // Long text split across many SSE events — verify full concatenation matches original.
         let long_word = "A".repeat(1000);
         let expected_text = (0..20).map(|i| format!("{} - chunk {}", long_word, i)).collect::<Vec<_>>().join("");
 
@@ -719,12 +719,12 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn stream_multi_chunk_fragmentation() {
-        /// Simulate a line split across TCP chunks: the SSE JSON is delivered in fragments.
-        /// Since we use mockito (full body), we construct a scenario where data lines are
-        /// interleaved with the last line's content being fragmented across reads.
-        ///
-        /// Strategy: put multiple complete events, ending with no trailing \n to force the
-        /// buffer-drain path.
+        // Simulate a line split across TCP chunks: the SSE JSON is delivered in fragments.
+        // Since we use mockito (full body), we construct a scenario where data lines are
+        // interleaved with the last line's content being fragmented across reads.
+        //
+        // Strategy: put multiple complete events, ending with no trailing \n to force the
+        // buffer-drain path.
         let json_payload = "{\"id\":\"cmpl-1\",\"model\":\"m\",\"choices\":[{\"delta\":{\"content\":\"final bit\"},\"finish_reason\":\"stop\"}]}";
         let body = format!(
             "data: {{\"id\":\"cmpl-1\",\"model\":\"m\",\"choices\":[{{\"delta\":{{\"content\":\"first \"}},\"finish_reason\":null}}]}}\n\
@@ -761,8 +761,8 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn stream_non_data_lines_ignored() {
-        /// SSE spec allows event:, retry:, id: lines and comments (starting with :).
-        /// These should be silently skipped.
+        // SSE spec allows event:, retry:, id: lines and comments (starting with :).
+        // These should be silently skipped.
         let body = "\
 : this is a comment\nevent: ping\n\
 data: {\"id\":\"x\",\"model\":\"m\",\"choices\":[{\"delta\":{\"content\":\"only\"},\"finish_reason\":null}]}\n\
@@ -796,7 +796,7 @@ data: [DONE]\n";
 
     #[tokio::test(flavor = "current_thread")]
     async fn stream_empty_data_field() {
-        /// Some providers send `data:\n` (colon but no value). Should not cause issues.
+        // Some providers send `data:\n` (colon but no value). Should not cause issues.
         let body = "data: \ndata: {\"id\":\"x\",\"model\":\"m\",\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":null}]}\ndata: [DONE]\n";
 
         let mut server = start_mock_server().await;
@@ -826,7 +826,7 @@ data: [DONE]\n";
 
     #[tokio::test(flavor = "current_thread")]
     async fn stream_only_done_with_no_newline() {
-        /// Minimal body: just "data: [DONE]" without trailing newline.
+        // Minimal body: just "data: [DONE]" without trailing newline.
         let mut server = start_mock_server().await;
         let mock = server
             .mock("POST", "/v1/chat/completions")
@@ -847,7 +847,7 @@ data: [DONE]\n";
 
     #[tokio::test(flavor = "current_thread")]
     async fn stream_double_done_handling() {
-        /// Some providers may send [DONE] twice. First should terminate; second is a no-op.
+        // Some providers may send [DONE] twice. First should terminate; second is a no-op.
         let body = "data: {\"id\":\"x\",\"model\":\"m\",\"choices\":[{\"delta\":{\"content\":\"hello\"},\"finish_reason\":null}]}\ndata: [DONE]\ndata: [DONE]\n";
 
         let mut server = start_mock_server().await;
@@ -880,7 +880,7 @@ data: [DONE]\n";
 
     #[tokio::test(flavor = "current_thread")]
     async fn stream_carriage_return_newline() {
-        /// Some providers use \r\n instead of \n. Must be handled gracefully.
+        // Some providers use \r\n instead of \n. Must be handled gracefully.
         let body = "data: {\"id\":\"x\",\"model\":\"m\",\"choices\":[{\"delta\":{\"content\":\"A\"},\"finish_reason\":null}]}\r\ndata: {\"id\":\"x\",\"model\":\"m\",\"choices\":[{\"delta\":{\"content\":\"B\"},\"finish_reason\":null}]}\r\ndata: [DONE]\r\n";
 
         let mut server = start_mock_server().await;
@@ -910,7 +910,7 @@ data: [DONE]\n";
 
     #[tokio::test(flavor = "current_thread")]
     async fn stream_exact_content_verification() {
-        /// End-to-end content integrity: known multi-sentence text across events
+        // End-to-end content integrity: known multi-sentence text across events
         let paragraph = "Rust is a multi-paradigm, general-purpose programming language that emphasizes performance, type safety, and concurrency.";
         let words: Vec<&str> = paragraph.split_whitespace().collect();
 
@@ -952,7 +952,7 @@ data: [DONE]\n";
             }
         }
 
-        let expected = words.iter().map(|w| format!("{} ", w)).collect::<String>() + "concurrency.";
+        let _expected = words.iter().map(|w| format!("{} ", w)).collect::<String>() + "concurrency.";
         assert_eq!(assembled.trim(), "Rust is a multi-paradigm, general-purpose programming language that emphasizes performance, type safety, and concurrency.");
         assert!(finish_reason_seen, "finish_reason must be yielded");
 
