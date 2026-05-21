@@ -80,7 +80,7 @@ impl StatsDb {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
             .prepare(
-                "SELECT id, timestamp, model, requested_model, success, input_tokens, output_tokens, total_tokens, latency_ms, error
+                "SELECT id, datetime(timestamp, '+8 hours'), model, requested_model, success, input_tokens, output_tokens, total_tokens, latency_ms, error
                  FROM token_usage ORDER BY id DESC LIMIT ?1",
             )
             .unwrap();
