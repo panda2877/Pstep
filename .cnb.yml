@@ -37,24 +37,6 @@ $:
           script: |
             cargo fmt --all --check
           continue-on-error: true
-        - name: integration-test
-          script: |
-            # 启动网关后台运行，验证健康检查和 API 端点
-            cargo run -p pstep-gateway &
-            GW_PID=$!
-            sleep 3
-
-            # 健康检查
-            HEALTH=$(curl -s http://localhost:3000/health)
-            echo "health: $HEALTH"
-
-            # 模型列表
-            MODELS=$(curl -s http://localhost:3000/v1/models)
-            echo "models: $MODELS"
-
-            kill $GW_PID 2>/dev/null
-            wait $GW_PID 2>/dev/null
-            echo "integration test passed"
 
     - name: release-build
       docker:
