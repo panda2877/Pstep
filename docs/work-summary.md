@@ -2,7 +2,7 @@
 
 ## 项目状态
 
-Pstep（版本 0.3.0）正在从 Node.js 重构为 Rust，采用 workspace 分层架构（pstep-core lib + pstep-gateway bin）。**Rust 重构主体已基本完成**，共 42 个单元测试全部通过，端到端集成验证通过。
+Pstep（版本 0.3.0）是一个 Rust 实现的 AI 模型网关，采用 workspace 分层架构（pstep-core lib + pstep-gateway bin）。共 42 个单元测试全部通过，端到端集成验证通过。
 
 ## 整体架构
 
@@ -31,7 +31,6 @@ pstep-core     (lib crate)
 - `pstep-core`（lib crate）和 `pstep-gateway`（bin crate）workspace 结构
 - 依赖：tokio, axum, reqwest, serde, rusqlite, tracing, mockito 等
 - `cargo build` 零 warning 通过；版本 0.3.0，edition 2024
-- `config/` 移动到项目根，Rust 和 Node.js 共用
 
 ### pstep-core 核心层（全部完成）
 | 模块 | 功能描述 | 测试数 |
@@ -124,9 +123,7 @@ Pstep/
 │   ├── Cargo.toml                # v0.3.0
 │   └── src/main.rs               # 所有路由 + ACP/WS（单文件约 1065 行）
 ├── config/
-│   ├── models.json               # 模型配置（mimo-v2.5）
-│   └── pi/                       # Pi 智能体配置（保留）
-├── code/                         # 现有 Node.js 代码（保留，过渡期可用）
+│   └── models.json               # 模型配置（mimo-v2.5）
 ├── docs/
 │   ├── rust-rewrite-design.md    # Rust 重构设计方案
 │   ├── kanban.md                 # 任务看板（含详细进度 ✅）

@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(node test_sdk.mjs)",
-      "Bash(node test_sdk2.mjs)",
-      "Bash(node test_sdk3.mjs)"
-    ]
-  }
-}
